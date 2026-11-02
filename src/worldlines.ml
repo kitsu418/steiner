@@ -39,6 +39,7 @@ type t = {
   blocked : (int, string) Hashtbl.t;
   sw : Eio.Switch.t;  (* grows are forked into it *)
   mutable current : (Eio.Switch.t * unit Eio.Promise.t) option;  (* the grow in progress *)
+  mutable epoch : int;  (* changes when nodes are renumbered (a deletion): a page must then read the forest again *)
 }
 
 (* JSON *)
@@ -107,7 +108,7 @@ let save t =
 let load ~sw ~path model =
   let t =
     { path; model; nodes = Dynarray.create (); kids = Hashtbl.create 1024; jobs = Dynarray.create ();
-      blocked = Hashtbl.create 8; sw; current = None }
+      blocked = Hashtbl.create 8; sw; current = None; epoch = int_of_float (Unix.time ()) }
   in
   if Sys.file_exists path then begin
     let j = try Yojson.Safe.from_file path with Yojson.Json_error e -> failwith (path ^ ": " ^ e) in
@@ -185,7 +186,8 @@ let state_json t since =
       ("blocked", blocked_json t);
       ("requests", `Int t.model.requests);
       ("note", `String t.model.note);
-      ("running", `Bool (running t)) ]
+      ("running", `Bool (running t));
+      ("epoch", `Int t.epoch) ]
 
 (* Growing *)
 
@@ -235,7 +237,7 @@ let fast_chunk t job i n =
       let p, m = lookup t r in
       match Model.generate t.model p m ~prompt:r.prompt ~text:(text t i) ~expected:(root_ids @ path_ids t i) ~steps:n with
       | exception Model.Fast_off e ->
-          t.model.note <- "fast grow off here (" ^ Util.truncate 120 e ^ "): scoring token by token";
+          t.model.note <- "Fast is off here: " ^ Util.truncate 160 e ^ ". Scoring token by token.";
           None
       | [], _, _ -> None
       | positions, stopped, text_ids ->
@@ -355,6 +357,62 @@ let start t ~node ~prompt ~text:txt ~steps ~model:sel ~fast =
   (Dynarray.length t.jobs - 1, begin_)
 
 (* After providers were renamed, the roots follow. *)
+(* Delete the worldline at node i: everything grown after it, and the worldlines started by hand from any of that.
+   A root goes with it; a token stays, as one of its parent's candidates, with nothing after it. Nodes are renumbered,
+   so the epoch changes. Returns how many nodes were removed. *)
+let delete t i =
+  if running t then raise (Bad_request "a grow is running: stop it first");
+  let n = size t in
+  if i < 0 || i >= n then raise (Bad_request "unknown node");
+  let is_root = match get t i with Root _ -> true | Tok _ -> false in
+  let removed = Array.make n false in
+  let rec mark j = if not removed.(j) then (removed.(j) <- true; List.iter mark (kids t j)) in
+  if is_root then mark i else List.iter mark (kids t i);
+  let gone j = removed.(j) || ((not is_root) && j = i) in  (* the kept token loses what came after it, too *)
+  let again = ref true in
+  while !again do
+    again := false;
+    Dynarray.iteri (fun k -> function Root r when (not removed.(k)) && r.origin >= 0 && gone r.origin -> mark k; again := true | _ -> ()) t.nodes
+  done;
+  let index = Array.make n (-1) and kept = Dynarray.create () in
+  Dynarray.iteri (fun k nd -> if not removed.(k) then (index.(k) <- Dynarray.length kept; Dynarray.add_last kept nd)) t.nodes;
+  let renumber = function
+    | Tok k -> Tok { k with p = index.(k.p) }
+    | Root r -> Root { r with origin = (if r.origin >= 0 then index.(r.origin) else -1) }
+  in
+  let parent = match get t i with Tok k -> k.p | Root _ -> -1 in
+  let jobs =
+    Dynarray.to_list t.jobs
+    |> List.filter_map (fun j ->
+           if removed.(j.start) || ((not is_root) && j.start = i) then None
+           else
+             let head = if removed.(j.head) || ((not is_root) && j.head = i) then parent else j.head in
+             if head < 0 then None else Some { j with start = index.(j.start); head = index.(head) })
+  in
+  let blocked = Hashtbl.fold (fun k v acc -> if k < n && not removed.(k) then (index.(k), v) :: acc else acc) t.blocked [] in
+  Dynarray.clear t.nodes;
+  Dynarray.iter (fun nd -> Dynarray.add_last t.nodes (renumber nd)) kept;
+  Dynarray.clear t.jobs;
+  List.iter (Dynarray.add_last t.jobs) jobs;
+  Hashtbl.reset t.blocked;
+  List.iter (fun (k, v) -> Hashtbl.replace t.blocked k v) blocked;
+  Hashtbl.reset t.kids;
+  for k = size t - 1 downto 0 do
+    match get t k with Tok tk -> Hashtbl.replace t.kids tk.p (k :: kids t tk.p) | Root _ -> ()
+  done;
+  t.epoch <- t.epoch + 1;
+  save t;
+  n - size t
+
+(* Delete every worldline. *)
+let clear t =
+  if running t then raise (Bad_request "a grow is running: stop it first");
+  let n = size t in
+  Dynarray.clear t.nodes; Dynarray.clear t.jobs; Hashtbl.reset t.blocked; Hashtbl.reset t.kids;
+  t.epoch <- t.epoch + 1;
+  save t;
+  n
+
 let rename_providers t renames =
   if renames <> [] then begin
     Dynarray.iter (function Root r -> (match List.assoc_opt r.provider renames with Some n -> r.provider <- n | None -> ()) | Tok _ -> ()) t.nodes;

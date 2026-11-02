@@ -81,18 +81,22 @@ let distribution ~width ~end_token ~answer_start before =
   List.mapi (fun i t -> (t, log mass.(i), i + 1)) toks
 
 let () =
-  let port = ref 8901 and template = ref "qwen" and key = ref "" and trim = ref true and plain = ref false in
+  let port = ref 8901 and template = ref "qwen" and key = ref "" and trim = ref true and plain = ref false and no_continue = ref false and limit_every = ref 0 and served = ref 0 in
   Arg.parse
     [ ("--port", Arg.Set_int port, "PORT");
       ("--template", Arg.Set_string template, "qwen|harmony");
       ("--key", Arg.Set_string key, "KEY require this bearer key");
       ("--no-trim", Arg.Clear trim, " keep trailing whitespace (Qwen's template trims it)");
-      ("--plain", Arg.Set plain, " answer like a non-vLLM server, without prompt_logprobs") ]
+      ("--plain", Arg.Set plain, " answer like a non-vLLM server, without prompt_logprobs");
+      ("--rate-limit-every", Arg.Set_int limit_every, "N answer every Nth request with a rate limit (HTTP 400), as GenAI Studio does");
+      ("--no-continue", Arg.Set no_continue, " ignore continue_final_message: close the answer and start a new one (as GenAI Studio does for gpt-oss)") ]
     ignore "fake_vllm";
   let open Yojson.Safe.Util in
   let handle req body =
     let auth = Http.Header.get (Http.Request.headers req) "authorization" in
+    incr served;
     if !key <> "" && auth <> Some ("Bearer " ^ !key) then (`Unauthorized, {|{"error":"bad key"}|})
+    else if !limit_every > 0 && !served mod !limit_every = 0 then (`Bad_request, {|{"detail":"Rate limit exceeded. Please try again later."}|})
     else
       let j = Yojson.Safe.from_string (Eio.Buf_read.(parse_exn take_all) body ~max_size:max_int) in
       let width = j |> member "prompt_logprobs" |> to_int_option |> Option.value ~default:5 in
@@ -108,7 +112,8 @@ let () =
       let toks = ref [] and answer_start = ref None in
       let add s = toks := !toks @ tokenize s in
       (* continue_final_message: the last (assistant) message is left open, and the answer goes on from it *)
-      let cont = match j |> member "continue_final_message" with `Bool b -> b | _ -> false in
+      let asked = match j |> member "continue_final_message" with `Bool b -> b | _ -> false in
+      let cont = asked && not !no_continue in
       let last = List.length msgs - 1 in
       List.iteri
         (fun k (role, content) ->
@@ -125,6 +130,11 @@ let () =
             add (content ^ if close then "<|im_end|>\n" else "")
           end)
         msgs;
+      (* a server that will not continue: the answer was closed above; a new one starts *)
+      if asked && !no_continue then begin
+        add (if harmony then "<|start|>assistant" else "<|im_start|>assistant\n");
+        answer_start := Some (List.length !toks)
+      end;
       let toks = Array.of_list !toks in
       let ids = Array.map id_of toks in
       let entries =
@@ -138,7 +148,7 @@ let () =
               let actual = if List.exists (fun (t, _, _) -> t = toks.(i)) d then [] else [ entry (toks.(i), -12., width + 3) ] in
               `Assoc (List.map entry d @ actual))
       in
-      if cont then begin
+      if asked then begin
         (* greedy generation with top_logprobs, as vLLM's chat completions return it *)
         let top = j |> member "top_logprobs" |> to_int_option |> Option.value ~default:5 in
         let max_tokens = j |> member "max_tokens" |> to_int_option |> Option.value ~default:16 in

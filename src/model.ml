@@ -14,18 +14,20 @@ type env = {
   http_post : url:string -> headers:(string * string) list -> string -> int * string;  (* status, body *)
 }
 
-type limiter = { mutex : Eio.Mutex.t; mutable last : float }
+type limiter = { mutex : Eio.Mutex.t; mutable last : float; mutable slow : float }
+(* slow: the interval learned from rate limits, used when longer than the provider's own *)
 
 type t = {
   env : env;
   providers : Providers.t;
   limiters : (string, limiter) Hashtbl.t;  (* by provider: one interval for all its models *)
   trims : (string * string, unit) Hashtbl.t;  (* models whose template trimmed a whitespace-ending text *)
+  no_fast : (string * string, string) Hashtbl.t;  (* models a server will not continue an answer for, and why *)
   mutable requests : int;
   mutable note : string;  (* the last passing error, while retrying *)
 }
 
-let create env providers = { env; providers; limiters = Hashtbl.create 4; trims = Hashtbl.create 4; requests = 0; note = "" }
+let create env providers = { env; providers; limiters = Hashtbl.create 4; trims = Hashtbl.create 4; no_fast = Hashtbl.create 4; requests = 0; note = "" }
 
 let probes = [ " 0"; "0" ]
 
@@ -33,7 +35,7 @@ let limiter t name =
   match Hashtbl.find_opt t.limiters name with
   | Some l -> l
   | None ->
-      let l = { mutex = Eio.Mutex.create (); last = neg_infinity } in
+      let l = { mutex = Eio.Mutex.create (); last = neg_infinity; slow = 0. } in
       Hashtbl.replace t.limiters name l;
       l
 
@@ -50,7 +52,7 @@ let post t (p : Providers.provider) ?(retries = 10) ?(wait = 30.) ?(scoring = tr
   let rec attempt n =
     let lim = limiter t p.name in
     Eio.Mutex.use_ro lim.mutex (fun () ->
-        let pause = p.min_interval -. (t.env.now () -. lim.last) in
+        let pause = Float.max p.min_interval lim.slow -. (t.env.now () -. lim.last) in
         if pause > 0. then t.env.sleep pause;
         lim.last <- t.env.now ());
     t.requests <- t.requests + 1;
@@ -63,6 +65,10 @@ let post t (p : Providers.provider) ?(retries = 10) ?(wait = 30.) ?(scoring = tr
               fail "the reply has no prompt_logprobs: %s must be a vLLM-backed server" p.name
           | j -> Error ("unexpected reply " ^ Util.truncate 200 (Yojson.Safe.to_string j))
           | exception Yojson.Json_error _ -> Error ("unexpected reply " ^ Util.truncate 200 reply))
+      | status, reply when status = 429 || Util.contains ~sub:"rate limit" (String.lowercase_ascii reply) ->
+          (* a rate limit (GenAI Studio answers 400 for it): wait, then go on, and space requests further apart *)
+          lim.slow <- Float.min 10. (Float.max 1. (Float.max p.min_interval lim.slow *. 1.5));
+          Error (Printf.sprintf "rate limited by %s (HTTP %d); now %.1f s between requests" p.name status lim.slow)
       | ((400 | 401 | 403 | 404) as status), reply -> fail "HTTP %d: %s" status (Util.truncate 300 reply)
       | status, reply -> Error (Printf.sprintf "HTTP %d: %s" status (Util.truncate 300 reply))
       | exception (Eio.Cancel.Cancelled _ as e) -> raise e
@@ -219,6 +225,7 @@ let generate t (p : Providers.provider) (m : Providers.model) ~prompt ~text ~exp
   let message role content = `Assoc [ ("role", `String role); ("content", `String content) ] in
   let messages = (match system with Some s -> [ message "system" s ] | None -> []) @ [ message "user" prompt; message "assistant" text ] in
   if text = "" then raise (Fast_off "nothing to continue from yet");
+  (match Hashtbl.find_opt t.no_fast (p.name, m.name) with Some why -> raise (Fast_off why) | None -> ());
   let data =
     try
       post t p ~retries:3 ~scoring:false
@@ -242,7 +249,17 @@ let generate t (p : Providers.provider) (m : Providers.model) ~prompt ~text ~exp
     | `List ids ->
         let ids = List.map to_int ids and n = List.length expected in
         let tail = List.filteri (fun i _ -> i >= List.length ids - n) ids in
-        if List.length ids < n || not (matches expected tail) then off "the server reads this text as other tokens";
+        if List.length ids < n || not (matches expected tail) then begin
+          (* the text is there, but followed by more: the server closed the answer and started a new one (its template
+             ignores continue_final_message for this model). That will not change, so it is not tried again. *)
+          let rec closed j = j + n < List.length ids && (matches expected (List.filteri (fun i _ -> i >= j && i < j + n) ids) || closed (j + 1)) in
+          if n > 0 && closed 0 then begin
+            let why = Printf.sprintf "the server does not continue an answer for %s (it starts a new one)" m.name in
+            Hashtbl.replace t.no_fast (p.name, m.name) why;
+            off "%s" why
+          end;
+          off "the server reads this text as other tokens"
+        end;
         tail
     | _ -> off "the server does not return token ids"
   in

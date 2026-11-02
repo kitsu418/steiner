@@ -6,6 +6,8 @@
    GET  /api/node?id=i             a node's prompt, text, model, token and children
    POST /api/grow                  {node, prompt, text, steps, provider?, model?, fast?} -> {job, start}
    POST /api/stop                  the state
+   POST /api/delete                {node} deletes the worldline at node (see Worldlines.delete) -> {removed, epoch}
+   POST /api/clear                 deletes every worldline -> {removed, epoch}
    GET  /api/providers             the providers, with each key's status but never the key
    PUT  /api/providers             {providers: [...]} replaces the list
    PUT  /api/providers/<name>/key  {key} sets the key ("" removes it)
@@ -157,6 +159,17 @@ let handle cfg (w : Worldlines.t) req body =
       | Some i when i >= 0 && i < Worldlines.size w -> json (Worldlines.node_json w i)
       | _ -> error `Bad_request "bad or unknown node id")
   | `POST, [ ""; "api"; "grow" ] -> grow w (read_json body)
+  | `POST, [ ""; "api"; "delete" ] -> (
+      match field (read_json body) "node" with
+      | `Int i -> (
+          match Worldlines.delete w i with
+          | removed -> json (`Assoc [ ("removed", `Int removed); ("epoch", `Int w.epoch) ])
+          | exception Worldlines.Bad_request e -> error `Bad_request "%s" e)
+      | _ -> error `Bad_request "which node?")
+  | `POST, [ ""; "api"; "clear" ] -> (
+      match Worldlines.clear w with
+      | removed -> json (`Assoc [ ("removed", `Int removed); ("epoch", `Int w.epoch) ])
+      | exception Worldlines.Bad_request e -> error `Bad_request "%s" e)
   | `POST, [ ""; "api"; "stop" ] ->
       Worldlines.stop w;
       json (Worldlines.state_json w (Worldlines.size w))

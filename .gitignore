@@ -1,4 +1,4 @@
 _build/
 *.install
-worldlines.json
+worldlines*.json
 *.tmp

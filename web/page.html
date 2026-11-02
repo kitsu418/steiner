@@ -56,7 +56,7 @@ body.resizing{cursor:col-resize;user-select:none}
 .seg:hover{border-color:var(--muted)}
 .seg.on{border-color:var(--ink)}
 .seg.sel{border-color:var(--accent);background:var(--wash);box-shadow:0 0 0 1px var(--accent)}
-.seg .x{font:12.5px/1.45 var(--mono);white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.seg .x{font:12.5px/1.45 var(--mono);white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .seg .x i{font-style:normal;color:var(--faint)}
 .seg .m{font-size:11.5px;color:var(--muted);display:flex;gap:6px;flex-wrap:wrap}
 .seg .m .low{color:var(--accent)}
@@ -71,6 +71,12 @@ body.resizing{cursor:col-resize;user-select:none}
 .reader{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-columns:minmax(0,1fr);min-height:0;min-width:0;overflow:hidden}
 .rhead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 0}
 .rhead h2{margin:0!important}
+.rbtns{display:flex;gap:6px}
+.lhead{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;padding:0 16px 0 0;pointer-events:none}
+.lhead h2{margin-bottom:0!important}
+.lhead .btn{pointer-events:auto}
+.btn.danger{color:var(--blocked)}
+.btn.danger:hover:not(:disabled){border-color:var(--blocked)}
 .prompt{margin:10px 16px 0;display:grid;gap:4px;min-width:0}
 .prompt label{font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
 .prompt textarea{min-height:3.2em;resize:vertical;font:13px/1.5 var(--mono);background:var(--soft);border-color:var(--line)}
@@ -93,7 +99,7 @@ body.resizing{cursor:col-resize;user-select:none}
 .picker-menu .ck{color:var(--accent);visibility:hidden}.picker-menu button[aria-selected=true] .ck{visibility:visible}
 .actions .note:empty{display:none}
 .edited .note{color:var(--accent)}
-pre.log{margin:0;white-space:pre-wrap;font:12px/1.5 var(--mono);color:var(--blocked);background:var(--soft);border-radius:3px;padding:6px 9px;max-height:7rem;overflow:auto}
+pre.log{margin:0;white-space:pre-wrap;font:12px/1.5 var(--mono);color:var(--muted);background:var(--soft);border-radius:3px;padding:6px 9px;max-height:7rem;overflow:auto}
 #text{margin:0 16px;font:14.5px/2.6 var(--mono);white-space:pre-wrap;word-break:break-word}
 #text .pre{color:var(--muted)}
 .tok{ruby-position:under;cursor:pointer;border-radius:3px}
@@ -181,6 +187,7 @@ input[type=number],select{height:30px;border:1px solid var(--line);border-radius
 #editText{border-radius:12px;background:var(--card);border:1px solid var(--line);padding:10px 12px}
 #status{font-size:13px}
 pre.log{border-radius:8px}
+pre.log.error{color:var(--blocked)}
 #cardTip{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.12)}
 #cardTip pre{background:var(--soft);border-radius:8px}
 dialog{background:var(--bg);border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.2)}
@@ -197,7 +204,7 @@ dialog{background:var(--bg);border:1px solid var(--line);border-radius:16px;box-
 </header>
 <div class="main">
   <section class="lines" id="lines">
-    <h2>Worldlines</h2>
+    <div class="lhead"><h2>Worldlines</h2><button class="btn small danger" id="clearAll" title="Delete every worldline">Clear all</button></div>
     <div id="tree"></div>
     <p class="empty" id="empty" hidden></p>
     <div class="zoom">
@@ -207,7 +214,7 @@ dialog{background:var(--bg);border:1px solid var(--line);border-radius:16px;box-
   </section>
   <div class="split" id="split" role="separator" aria-orientation="vertical" aria-label="Resize the panels" tabindex="0" title="Drag to resize · double-click to reset"></div>
   <section class="reader">
-    <div class="rhead"><h2 id="readerTitle">Text</h2><button class="btn small" id="edit">Edit text</button></div>
+    <div class="rhead"><h2 id="readerTitle">Text</h2><span class="rbtns"><button class="btn small danger" id="del" title="Delete the selected card and everything grown after it">Delete</button><button class="btn small" id="edit">Edit text</button></span></div>
     <div class="prompt" id="promptBox">
       <label for="prompt">Prompt</label>
       <textarea id="prompt" spellcheck="false" rows="3"></textarea>
@@ -259,7 +266,7 @@ dialog{background:var(--bg);border:1px solid var(--line);border-radius:16px;box-
 const $ = id => document.getElementById(id);
 const el = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; };
 const SPECIAL = /^<\|[^|]+\|>$/, SVG = 'http://www.w3.org/2000/svg';
-let note = '', cfg, nodes = [], kids = [], edits = new Map(), jobs = [], blocked = {}, requests = 0, running = false, timer = null, pending = null;
+let epoch = null, note = '', cfg, nodes = [], kids = [], edits = new Map(), jobs = [], blocked = {}, requests = 0, running = false, timer = null, pending = null;
 let grownSet = new Set(), segs = [], segOf = new Map(), sel = null, cursor = null, fanAt = null;  // fanAt: where candidates hang open  // sel: the selected segment; cursor: the selected token
 
 function addNodes(list) {
@@ -307,7 +314,22 @@ function buildSegments() {
   }
   for (let r = 0; r < nodes.length; r++) if (isRoot(r) && nodes[r].origin < 0) build(r, null);
 }
-const segText = s => s.nodes.map(i => isRoot(i) ? nodes[i].prefix : SPECIAL.test(nodes[i].t) ? '⏎' : nodes[i].t).join('');
+// How a worldline that you started differs from the one it is drawn next to: the same text with another model, or
+// edited text (with which model, if not the same one).
+function startedBy(r) {
+  const o = nodes[r].origin, m = nodes[r].model;
+  if (o < 0) return null;
+  const om = nodes[rootOf(o)].model;
+  if (nodes[r].prefix === textOf(o)) return m !== om ? `switched to ${m}` : 'grown again';
+  return m !== om ? `edited text · ${m}` : 'edited text';
+}
+function ownPrefix(r) {  // a diverged root's text, less what it shares with the node it diverged from
+  const pre = nodes[r].prefix, o = nodes[r].origin;
+  if (o < 0) return pre;
+  const base = textOf(o); let k = 0; while (k < pre.length && k < base.length && pre[k] === base[k]) k++;
+  return pre.slice(k);
+}
+const segText = s => s.nodes.map(i => isRoot(i) ? ownPrefix(i) : SPECIAL.test(nodes[i].t) ? '⏎' : nodes[i].t).join('');
 
 // Left to right, one column per fork; a segment sits in the middle of its children.
 const W = 196, H = 66, GH = 28, COL = W + 34, VGAP = 12;
@@ -315,19 +337,10 @@ function drawTree() {
   const box = $('tree'); box.replaceChildren(); box.style.setProperty('--w', W + 'px');
   const svg = document.createElementNS(SVG, 'svg'); box.append(svg);
   const onPath = new Set(); for (let s = sel; s; s = s.parent) onPath.add(s);
-  const pos = new Map(); let next = 0, maxX = 0;
-  const hOf = s => s.ghost ? GH : H;
-  function place(s, depth) {
-    s.kids.forEach(k => place(k, depth + 1));
-    let mid;
-    if (s.kids.length) { const a = pos.get(s.kids[0]), b = pos.get(s.kids.at(-1)); mid = (a.y + a.h / 2 + b.y + b.h / 2) / 2; }
-    else { mid = next + hOf(s) / 2; next += hOf(s) + (s.ghost ? 6 : VGAP); }
-    pos.set(s, {x: depth * COL, y: mid - hOf(s) / 2, h: hOf(s)}); maxX = Math.max(maxX, depth * COL + W);
-  }
-  for (const s of segs) if (!s.parent) { place(s, 0); next += H; }
+  // the cards are made first, so that the layout uses their real heights (a card's text and notes may wrap)
+  const pos = new Map(), cards = new Map(); let next = 0, maxX = 0;
   for (const s of segs) {
-    const p = pos.get(s), b = document.createElement('button');
-    b.style.left = p.x + 'px'; b.style.top = p.y + 'px'; b.segRef = s;
+    const b = document.createElement('button'); b.segRef = s; cards.set(s, b);
     if (s.ghost) {  // a candidate: its token and probability; clicking it grows from there
       const c = s.start, pr = prob(c);
       b.className = 'seg ghost' + (c === cursor ? ' cur' : '');
@@ -335,26 +348,43 @@ function drawTree() {
                Object.assign(document.createElement('div'), {className: 'm', innerHTML: `<span class="${pr < .5 ? 'low' : ''}">${pctAlways(pr)} · #${nodes[c].r}</span>`}));
       b.onmouseenter = e => showTip(s, e); b.onmousemove = e => moveTip(e); b.onmouseleave = hideTip;
       b.onclick = () => growFrom(c);
-      box.append(b); link(s, p); continue;
+      box.append(b); continue;
     }
     b.className = 'seg' + (s === sel ? ' sel' : onPath.has(s) ? ' on' : '');
     const text = segText(s), x = document.createElement('div'); x.className = 'x';
     // newlines shown as a quiet ↵, runs of spaces kept short
-    for (const [k, line] of text.split('\n').entries()) { if (k) x.append(Object.assign(document.createElement('i'), {textContent: ' ↵ '})); x.append(line.replace(/ {2,}/g, ' ')); }
+    // line breaks break the line, as in the text; an empty first line (the text starts with a newline) shows as a quiet ↵
+    text.split('\n').forEach((line, k) => { if (k) x.append('\n'); x.append(k === 0 && !line && text.length > 0 ? Object.assign(document.createElement('i'), {textContent: '↵'}) : line); });
     if (!text) x.append(Object.assign(document.createElement('i'), {textContent: '(empty)'}));
     const m = document.createElement('div'); m.className = 'm';
     const add = (t, c) => m.append(Object.assign(document.createElement('span'), {textContent: t, className: c || ''}));
-    if (isRoot(s.start)) add(nodes[s.start].model + (nodes[s.start].origin >= 0 ? ' · diverged' : ''));
+    if (isRoot(s.start)) add(startedBy(s.start) ?? nodes[s.start].model);
     else { const pr = prob(s.start); add(`${pctAlways(pr)} · #${nodes[s.start].r}`, pr < .5 ? 'low' : ''); }
     add(`${s.nodes.length - (isRoot(s.start) ? 1 : 0)} tokens`);
     const last = nodes[s.end];
     if (!s.kids.length) add(!isRoot(s.end) && SPECIAL.test(last.t) ? 'ended' : 'open ⋯', !isRoot(s.end) && SPECIAL.test(last.t) ? 'endm' : '');
-    else add(`${s.kids.length} ways →`);
+    else add(`${s.kids.length} way${s.kids.length > 1 ? "s" : ""} →`);
     b.append(x, m);
     b.onmouseenter = e => showTip(s, e); b.onmousemove = e => moveTip(e); b.onmouseleave = hideTip;
     b.onclick = () => { const t = s.end; fanAt = kids[t].length ? t : null; buildSegments(); select(segOf.get(t)); const g = segs.find(x => x.ghost && x.parent?.end === t); if (g) { if (tz < .9) { const pane = $('lines'); zoomAt(1 / tz, pane.clientWidth / 2, pane.clientHeight / 2); } centerOn(g); } };
-    box.append(b); link(s, p);
+    box.append(b);
   }
+  const hOf = s => cards.get(s).offsetHeight || (s.ghost ? GH : H);
+  function place(s, depth) {  // left to right by depth; a segment in the middle of its children
+    s.kids.forEach(k => place(k, depth + 1));
+    let mid;
+    if (s.kids.length) { const a = pos.get(s.kids[0]), b = pos.get(s.kids.at(-1)); mid = (a.y + a.h / 2 + b.y + b.h / 2) / 2; }
+    else { mid = next + hOf(s) / 2; next += hOf(s) + (s.ghost ? 6 : VGAP); }
+    pos.set(s, {x: depth * COL, y: mid - hOf(s) / 2, h: hOf(s)}); maxX = Math.max(maxX, depth * COL + W);
+  }
+  for (const s of segs) if (!s.parent) { place(s, 0); next += H; }
+  // a parent centred on tall children can still meet a card above it: push each column apart where they touch
+  const cols = new Map(); for (const [s, p] of pos) { const c = cols.get(p.x) || []; c.push(s); cols.set(p.x, c); }
+  for (const col of cols.values()) {
+    col.sort((a, b) => pos.get(a).y - pos.get(b).y);
+    for (let k = 1; k < col.length; k++) { const a = pos.get(col[k - 1]), b = pos.get(col[k]), gap = a.y + a.h + 8 - b.y; if (gap > 0) b.y += gap; }
+  }
+  for (const [s, p] of pos) { const b = cards.get(s); b.style.left = p.x + 'px'; b.style.top = p.y + 'px'; next = Math.max(next, p.y + p.h); link(s, pos.get(s)); }
   function link(s, p) {  // from the end of the parent to this segment
     if (!s.parent) return;
     const q = pos.get(s.parent), x0 = q.x + W, y0 = q.y + q.h / 2, x1 = p.x, y1 = p.y + p.h / 2, mid = (x0 + x1) / 2;
@@ -415,7 +445,10 @@ function showTip(s, e) {
     const pc = i => { const p = prob(i) * 100; return p >= 99.95 ? '>99.9%' : p >= 10 ? p.toFixed(0) + '%' : p >= .1 ? p.toFixed(1) + '%' : p.toPrecision(2) + '%'; };
     const ord = r => ['', 'top', '2nd', '3rd'][r] || `${r}th`;
     const tok = i => JSON.stringify(nodes[i].t);
-    if (root) lines.push(nodes[first].origin >= 0 ? `A new worldline from edited text, written by ${nodes[first].model}.` : `The start, written by ${nodes[first].model}.`);
+    const how = root && startedBy(first);
+    if (root) lines.push(!how ? `The start, written by ${nodes[first].model}.`
+      : how.startsWith('switched') ? `The same text as the card it hangs from, continued by ${nodes[first].model} instead.`
+      : `Your edited text, continued by ${nodes[first].model}. The card shows what you changed.`);
     else if (nodes[first].r === 1) lines.push(`Goes on with ${tok(first)}, the model's top choice here (${pc(first)}).`);
     else lines.push(`Branches off with ${tok(first)}, the model's ${ord(nodes[first].r)} choice here (${pc(first)}).`);
     const toks = s.nodes.filter(i => !isRoot(i)), unsure = toks.filter(i => i !== first && prob(i) < .5);
@@ -445,7 +478,7 @@ let firstDraw = true;
 function drawText() {
   const box = $('text'); box.replaceChildren();
   if (!sel) { $('readerTitle').textContent = 'Text'; return; }
-  const path = []; for (let i = sel.end; i != null && i >= 0; i = up(i)) path.unshift(i);
+  const path = []; for (let i = sel.end; ; i = nodes[i].p) { path.unshift(i); if (isRoot(i)) break; }
   $('readerTitle').textContent = `Text · ${nodes[rootOf(sel.end)].model}`;
   let odd = false;
   for (const i of path) {
@@ -482,15 +515,27 @@ function openAt(i) {  // the clicked token: its candidates hang open on the tree
   const g = segs.find(s => s.ghost && s.parent?.end === fanAt) ?? segOf.get(i);
   if (g) { if (tz < .9) { const pane = $('lines'); zoomAt(1 / tz, pane.clientWidth / 2, pane.clientHeight / 2); } centerOn(g); }
 }
-function growFrom(c) { cursor = c; fanAt = null; fillBoxes(); grow(Math.max(1, Number($('steps').value) || 1)); }
+function growFrom(c) {  // a candidate on the tree: grow from it, as it is, with its worldline's model
+  cursor = c; fanAt = null;
+  const [provider, model] = JSON.parse(modelOf(c));
+  getJSON('/api/grow', {node: c, prompt: promptOf(c), text: textOf(c), steps: Math.max(1, Number($('steps').value) || 1), provider, model, fast: $('fast').checked})
+    .then(r => { pending = r.start; setTimeout(poll, 500); }).catch(e => { $('status').textContent = e.message; });
+}
 
 const editable = i => { let t = textOf(i); if (!isRoot(i) && SPECIAL.test(nodes[i].t)) t = t.slice(0, -nodes[i].t.length); return t; };
-function fillBoxes() { const i = cursor ?? sel?.end; if (i == null) return; $('prompt').value = promptOf(i); promptLine(); $('editText').value = editable(i); setModel(modelOf(i)); edited(); }
-function isChanged() { const i = cursor; return i == null || $('model').value !== modelOf(i) || $('prompt').value !== promptOf(i) || $('editText').value !== editable(i); }
+function fillBoxes() { const i = sel?.end; if (i == null) return; if ($('editText').hidden || !isChanged()) $('editText').value = editable(i); $('prompt').value = promptOf(i); promptLine(); setModel(modelOf(i)); edited(); }
+function isChanged() { const i = sel?.end; return i == null || $('model').value !== modelOf(i) || $('prompt').value !== promptOf(i) || $('editText').value !== editable(i); }
+// Where an edited text leaves the worldline: the deepest node on it whose text the edit still starts with.
+function forkPoint(t) {  // through a diverged root, on into the worldline it came from
+  for (let i = sel.end; ; ) {
+    if (t.startsWith(textOf(i))) return i;
+    if (!isRoot(i)) i = nodes[i].p; else if (nodes[i].origin >= 0) i = nodes[i].origin; else return i;
+  }
+}
 function edited() {
-  const i = cursor, changed = isChanged();
+  const i = sel?.end, at = cursor ?? i, changed = isChanged();  // at: where an unchanged Grow continues from
   $('grow').textContent = i != null && changed ? 'Grow new worldline' : 'Grow';
-  const done = i != null && !changed && !isRoot(i) && SPECIAL.test(nodes[i].t);  // nothing comes after the end of an answer
+  const done = i != null && !changed && at != null && !isRoot(at) && SPECIAL.test(nodes[at].t);  // nothing comes after the end of an answer
   $('grow').disabled = $('next').disabled = done;
   document.querySelector('.reader').classList.toggle('edited', i != null && changed);
   $('editNote').textContent = done ? 'The model ended its answer here. Edit the text, or open a card\'s candidates on the tree, to grow another worldline.' : i == null ? 'Write a prompt, then Grow.' : changed ? 'Changed: Grow starts a new worldline from this text.' : 'Grow continues from the selected token. Edit the text or prompt to start a new worldline here.';
@@ -528,6 +573,8 @@ async function getJSON(url, data, method = 'POST') {
 async function poll() {
   clearTimeout(timer);
   let s; try { s = await getJSON('/api/state?from=' + nodes.length); } catch { $('status').textContent = 'server not responding'; timer = setTimeout(poll, 4000); return; }
+  if (epoch != null && s.epoch !== epoch) { location.reload(); return; }
+  epoch = s.epoch;
   const fresh = s.nodes.length; addNodes(s.nodes); jobs = s.jobs; blocked = s.blocked; requests = s.requests; running = s.running; note = s.note; markGrown();
   if (fresh || running || !segs.length) {
     const was = sel && [sel.end, sel.start];
@@ -542,15 +589,17 @@ async function poll() {
     if (firstDraw) { firstDraw = false; fitTree(); } else if (running) reveal(sel);
   }
   const job = jobs.at(-1);
-  $('stop').disabled = !running;
+  $('stop').disabled = !running; $('del').disabled = running || !sel; $('clearAll').disabled = running || !nodes.length;
   $('status').textContent = job ? `${running ? 'Growing' : {done: 'Done', ended: 'Ended', stopped: 'Stopped', failed: 'Failed'}[job.status] || job.status} · ${job.added} of ${job.steps} tokens · ${requests} requests` : '';
-  const msg = job?.error || (running && note) || ''; $('log').hidden = !msg; $('log').textContent = msg;
+  const msg = job?.error || (running && note) || ''; $('log').hidden = !msg; $('log').textContent = msg; $('log').className = 'log' + (job?.error ? ' error' : '');
   timer = setTimeout(poll, running ? 800 : 4000);
 }
 async function grow(steps) {
   try {
     const [provider, model] = JSON.parse($('model').value);
-    const r = await getJSON('/api/grow', {node: cursor, prompt: $('prompt').value, text: isChanged() ? $('editText').value : textOf(cursor), steps, provider, model, fast: $('fast').checked});
+    const changed = isChanged(), text = $('editText').value;
+    const node = changed ? (sel ? forkPoint(text) : null) : (cursor ?? sel?.end ?? null);
+    const r = await getJSON('/api/grow', {node, prompt: $('prompt').value, text: changed ? text : textOf(node), steps, provider, model, fast: $('fast').checked});
     pending = r.start; setTimeout(poll, 500);
   } catch (e) { $('status').textContent = e.message; }
 }
@@ -558,10 +607,25 @@ $('grow').onclick = () => grow(Math.max(1, Number($('steps').value) || 1));
 $('next').onclick = () => grow(0);
 $('stop').onclick = async () => { await getJSON('/api/stop', {}); poll(); };
 // Editing the text in place: the reading view becomes a text box; Grow then starts a new worldline from it.
+// Delete the selected card and everything after it (a card grown from a candidate leaves the candidate in place)
+$('clearAll').onclick = async () => {
+  if (running || !nodes.length) return;
+  const n = segs.filter(s => !s.ghost && isRoot(s.start)).length;
+  if (!confirm(`Delete all ${n} worldline tree${n === 1 ? '' : 's'} (${nodes.length.toLocaleString('en-US')} nodes)?\n\nThis cannot be undone.`)) return;
+  try { await getJSON('/api/clear', {}); location.reload(); } catch (e) { $('status').textContent = e.message; }
+};
+$('del').onclick = async () => {
+  if (!sel || running) return;
+  let cards = 0, tokens = 0; (function count(s) { if (s.ghost) return; cards++; tokens += s.nodes.length - (isRoot(s.start) ? 1 : 0); s.kids.forEach(count); })(sel);
+  const what = isRoot(sel.start) && nodes[sel.start].origin < 0 ? 'this whole tree' : 'this card';
+  const preview = segText(sel).replace(/\s+/g, ' ').trim().slice(0, 50);
+  if (!confirm(`Delete ${what}${cards > 1 ? ` and the ${cards - 1} card${cards > 2 ? 's' : ''} after it` : ''} (${tokens} tokens)?\n\n"${preview}…"\n\nThis cannot be undone.`)) return;
+  try { await getJSON('/api/delete', {node: sel.start}); location.reload(); } catch (e) { $('status').textContent = e.message; }
+};
 $('edit').onclick = () => {
   const editing = $('editText').hidden;
   $('editText').hidden = !editing; $('text').hidden = editing; $('edit').textContent = editing ? 'Done' : 'Edit text';
-  if (editing) { $('editText').focus(); } else if ($('editText').value === editable(cursor ?? sel.end)) drawText();
+  if (editing) { $('editText').focus(); } else if ($('editText').value === editable(sel.end)) drawText();
   edited();
 };
 // the prompt box grows with its text, up to a few lines
