@@ -1,0 +1,729 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steiner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Steiner: the worldlines as a tree on the left (switching, candidates), the selected worldline's text on the right
+   (reading, editing, growing). */
+:root{color-scheme:light;--bg:#faf9f5;--ink:#141413;--muted:#73726c;--faint:#c9c6bb;--line:#e8e6dc;--soft:#f0eee6;--accent:#c96442;--wash:#f7e7df;--end:#3f7d4e;--blocked:#b53c2e;--side:#f5f4ed;--card:#ffffff;--ring:rgba(201,100,66,.18);
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;--sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;--serif:"Source Serif 4",Georgia,serif;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#262624;--ink:#f5f4ef;--muted:#9c9a92;--faint:#55544e;--line:#3a3935;--soft:#30302e;--accent:#d97757;--wash:#3e2d26;--end:#8bc49a;--blocked:#e8806f;--side:#1f1e1d;--card:#30302e;--ring:rgba(217,119,87,.22);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#262624;--ink:#f5f4ef;--muted:#9c9a92;--faint:#55544e;--line:#3a3935;--soft:#30302e;--accent:#d97757;--wash:#3e2d26;--end:#8bc49a;--blocked:#e8806f;--side:#1f1e1d;--card:#30302e;--ring:rgba(217,119,87,.22);color-scheme:dark}
+*{box-sizing:border-box}[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+.bar{display:flex;align-items:center;gap:8px;padding:9px 16px;border-bottom:1px solid var(--ink)}
+.btn.icon{width:30px;padding:0;display:inline-grid;place-items:center}.btn.icon svg{width:16px;height:16px}
+.btn.small{height:26px;padding:0 9px;font-size:13px}
+.btn.ghost{border-color:transparent}.btn.danger{color:var(--blocked)}
+.opt{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px}.opt input[type=number]{width:58px}
+.dim{color:var(--faint)}
+.brand{font-weight:600;font-size:16px;letter-spacing:-.01em;margin-right:6px}
+.btn{height:30px;padding:0 11px;border:1px solid var(--faint);border-radius:3px;background:var(--bg);cursor:pointer}
+.btn:hover:not(:disabled){border-color:var(--muted)}
+.btn:disabled{opacity:.4;cursor:default}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink);font-weight:500}
+.btn.primary:hover:not(:disabled){background:var(--accent);border-color:var(--accent);color:#fff}
+select,input[type=number]{height:30px;border:1px solid var(--line);border-radius:3px;background:var(--bg);padding:0 6px}
+input[type=number]{width:64px}
+#status{color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
+.main{display:grid;grid-template-columns:var(--left,46%) 9px minmax(0,1fr);min-height:0}
+.lines{overflow:auto;padding:14px 0 30px}
+.split{cursor:col-resize;position:relative;touch-action:none}
+.split::before{content:"";position:absolute;inset:0 4px;background:var(--faint)}
+.split:hover::before,.split.active::before{inset:0 3px;background:var(--accent)}
+body.resizing{cursor:col-resize;user-select:none}
+.lines h2,.reader h2{margin:0 16px 8px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.lines{position:relative;overflow:hidden!important;cursor:grab;touch-action:none;user-select:none}
+.lines.dragging{cursor:grabbing}
+.lines h2{position:relative;z-index:1;pointer-events:none}
+#tree{position:absolute;left:0;top:0;transform-origin:0 0}
+.empty{position:absolute;inset:40% 24px auto;text-align:center;color:var(--muted);margin:0}
+.zoom{position:absolute;left:12px;bottom:12px;z-index:1;display:flex;gap:4px;align-items:center;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:4px}
+.zoom .opt{margin-left:8px;padding-right:4px}
+.zoom .btn{background:var(--bg)}
+#tree svg{position:absolute;inset:0;overflow:visible;pointer-events:none}
+#tree svg path{fill:none;stroke:var(--faint);stroke-width:1.5px}
+#tree svg path.on{stroke:var(--accent);stroke-width:1.75px}
+#tree svg path.div{stroke-dasharray:4 4}
+.seg{position:absolute;width:var(--w);display:grid;gap:3px;padding:7px 10px;border:1px solid var(--faint);border-radius:4px;background:var(--bg);cursor:pointer;text-align:left;font:inherit}
+.seg:hover{border-color:var(--muted)}
+.seg.on{border-color:var(--ink)}
+.seg.sel{border-color:var(--accent);background:var(--wash);box-shadow:0 0 0 1px var(--accent)}
+.seg .x{font:12.5px/1.45 var(--mono);white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.seg .x i{font-style:normal;color:var(--faint)}
+.seg .m{font-size:11.5px;color:var(--muted);display:flex;gap:6px;flex-wrap:wrap}
+.seg .m .low{color:var(--accent)}
+.seg .m .endm{color:var(--end)}
+.seg.ghost{width:auto;min-width:96px;max-width:var(--w);border-style:dashed;padding:4px 9px;grid-auto-flow:column;align-items:center;justify-content:space-between;gap:12px;background:transparent}
+.seg.ghost .x{color:var(--muted);-webkit-line-clamp:1}
+.seg.ghost .m{font-size:11px}
+.seg.ghost:hover{border-style:solid;background:var(--soft)}
+.seg.ghost:hover .x{color:var(--ink)}
+.seg.ghost.cur{border-color:var(--accent);border-style:solid}
+#tree svg path.ghost{stroke-dasharray:2 3}
+.reader{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-columns:minmax(0,1fr);min-height:0;min-width:0;overflow:hidden}
+.rhead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 0}
+.rhead h2{margin:0!important}
+.prompt{margin:10px 16px 0;display:grid;gap:4px;min-width:0}
+.prompt label{font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.prompt textarea{min-height:3.2em;resize:vertical;font:13px/1.5 var(--mono);background:var(--soft);border-color:var(--line)}
+.scroll{overflow:auto;padding:12px 0 24px}
+#editText{display:block;margin:0 16px;width:calc(100% - 32px);min-height:calc(100% - 4px);font:14px/1.6 var(--mono)}
+.actions{border-top:1px solid var(--ink);padding:10px 16px 12px;display:grid;gap:8px;background:var(--bg)}
+.actions .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.picker{position:relative}
+.picker-btn{display:inline-flex;align-items:center;gap:8px;max-width:340px}
+.picker-btn .pm{font-weight:500;white-space:nowrap}
+.picker-btn .pp{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.picker-btn svg{width:14px;height:14px;flex:none;color:var(--muted)}
+.picker-menu{position:absolute;left:0;bottom:calc(100% + 6px);z-index:5;min-width:260px;max-width:380px;max-height:320px;overflow:auto;background:var(--card,var(--bg));border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 32px rgba(0,0,0,.14);padding:6px}
+.picker-menu .h{font-size:12px;color:var(--muted);padding:6px 10px 4px}
+.picker-menu button{display:grid;grid-template-columns:minmax(0,1fr) 16px;align-items:center;gap:10px;width:100%;border:0;background:none;border-radius:8px;padding:7px 10px;text-align:left;cursor:pointer;color:var(--ink)}
+.picker-menu button:hover,.picker-menu button:focus-visible{background:var(--soft);outline:none}
+.picker-menu button[aria-selected=true]{background:var(--wash)}
+.picker-menu .n{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.picker-menu .d{display:block;font-size:12px;color:var(--muted);font-weight:400}
+.picker-menu .ck{color:var(--accent);visibility:hidden}.picker-menu button[aria-selected=true] .ck{visibility:visible}
+.actions .note:empty{display:none}
+.edited .note{color:var(--accent)}
+pre.log{margin:0;white-space:pre-wrap;font:12px/1.5 var(--mono);color:var(--blocked);background:var(--soft);border-radius:3px;padding:6px 9px;max-height:7rem;overflow:auto}
+#text{margin:0 16px;font:14.5px/2.6 var(--mono);white-space:pre-wrap;word-break:break-word}
+#text .pre{color:var(--muted)}
+.tok{ruby-position:under;cursor:pointer;border-radius:3px}
+.tok.odd{background:var(--line)}.tok.even{background:var(--soft)}
+.tok:hover{outline:1px solid var(--muted)}
+.tok rt{font:10.5px/1 var(--sans);color:var(--muted);user-select:none}
+.tok.low rt{color:var(--accent)}
+.tok.fork{box-shadow:inset 0 -2px 0 var(--faint)}
+.tok.div{box-shadow:inset 0 -2px 0 var(--accent);color:var(--accent);font-weight:600}
+.tok.cur{background:var(--wash);outline:1.5px solid var(--accent)}
+.tok.end{color:var(--end)}
+.after{color:var(--faint)}
+.more{color:var(--accent);cursor:pointer;font-weight:600}
+#cardTip{position:fixed;z-index:4;pointer-events:none;max-width:420px;background:var(--bg);border:1px solid var(--line);border-radius:4px;box-shadow:0 8px 24px rgb(0 0 0/.16);padding:10px 12px;display:grid;gap:6px;font-size:12.5px}
+#cardTip pre{margin:0;font:12.5px/1.5 var(--mono);white-space:pre-wrap;max-height:16em;overflow:hidden;background:var(--soft);border-radius:5px;padding:6px 8px}
+#cardTip dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0}
+#cardTip dt{color:var(--muted)}#cardTip dd{margin:0;font-variant-numeric:tabular-nums}
+#cardTip .hint{color:var(--accent)}
+textarea{width:100%;min-height:6rem;resize:vertical;border:1px solid var(--line);border-radius:3px;padding:8px;font:12.5px/1.55 var(--mono);background:var(--bg)}
+.note{color:var(--muted);font-size:13px;margin:0}
+/* providers dialog */
+dialog{border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--ink);padding:0;width:min(780px,calc(100vw - 32px));max-height:calc(100vh - 48px);box-shadow:0 20px 50px rgb(0 0 0/.25)}
+dialog::backdrop{background:rgb(0 0 0/.35)}
+.dlg{display:grid;grid-template-rows:auto minmax(0,1fr) auto;max-height:calc(100vh - 50px)}
+.dlg-top{padding:16px 20px 12px;border-bottom:1px solid var(--line);display:grid;gap:4px}
+.dlg-top h2{margin:0;font-size:16px}
+.dlg-body{overflow:auto;padding:14px 20px;display:grid;gap:12px;align-content:start}
+.dlg-foot{padding:12px 20px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.card{border:1px solid var(--line);border-radius:4px;padding:12px 14px;display:grid;gap:12px}
+.card-head{display:flex;justify-content:space-between;align-items:center}
+.card-head h3{margin:0;font-size:15px}
+.grid{display:grid;gap:10px 12px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));align-items:end}
+.grid .wide{grid-column:1/-1}
+.card label:not(.check){display:grid;gap:3px;font-size:13px;color:var(--muted)}
+.card input,.card select,.card textarea{width:100%;height:30px;border:1px solid var(--line);border-radius:3px;padding:0 8px;background:var(--bg)}
+.card textarea{height:auto;padding:6px 8px}
+.sub{display:grid;gap:8px;padding-top:10px;border-top:1px solid var(--line)}
+.sub h4{margin:0;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.mrow{display:grid;gap:8px;grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto auto;align-items:end}
+.mrow .out,.mrow details{grid-column:1/-1}
+.mrow details summary{font-size:13px;color:var(--muted);cursor:pointer;width:max-content}
+.keyrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.keyrow input{flex:1 1 220px;width:auto}
+.ok{color:var(--end)!important}.bad{color:var(--blocked)!important}
+/* ---- warm, soft, quiet: in the manner of Claude's interface ---- */
+body{font-size:14px;letter-spacing:-.003em}
+.bar{background:var(--side);border-bottom:1px solid var(--line);padding:10px 18px}
+.brand{font:500 20px/1 var(--serif);letter-spacing:-.01em}
+.lines{background:var(--side)}
+.lines h2,.reader h2,.prompt label,.sub h4{font:500 13px var(--sans)!important;letter-spacing:0!important;text-transform:none!important;color:var(--muted)!important}
+.split::before{background:var(--line)!important;inset:0 4px!important}
+.split:hover::before,.split.active::before{background:var(--accent)!important;inset:0 3px!important}
+.btn{height:32px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font-weight:500;transition:background-color .15s,border-color .15s}
+.btn:hover:not(:disabled){background:var(--soft);border-color:var(--faint)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;border-radius:8px;padding:0 16px}
+.btn.primary:hover:not(:disabled){background:var(--accent);border-color:var(--accent);filter:brightness(.93);color:#fff}
+.btn.small{height:28px;border-radius:7px}
+.btn.icon{border-radius:8px}
+.zoom{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:5px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.zoom .btn{height:28px;border-color:transparent;background:transparent}.zoom .btn:hover:not(:disabled){background:var(--soft)}
+.opt{font-size:13px}
+input[type=number],select{height:30px;border:1px solid var(--line);border-radius:8px;background:var(--card);padding:0 8px}
+.seg{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.seg:hover{border-color:var(--faint)}
+.seg.on{border-color:var(--faint)}
+.seg.sel{border-color:var(--accent);background:var(--card);box-shadow:0 0 0 3px var(--ring)}
+.seg .m{font-size:11.5px}
+.seg.ghost{background:transparent;border:1px dashed var(--faint);border-radius:10px;box-shadow:none}
+.seg.ghost:hover{background:var(--card);border-style:solid}
+#tree svg path{stroke:var(--faint);stroke-width:1.25px}
+#tree svg path.on{stroke:var(--accent);stroke-width:1.75px}
+.reader{background:var(--bg)}
+.rhead{padding:16px 22px 0}
+.prompt{margin:12px 22px 0}
+.prompt textarea{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:13px/1.55 var(--mono)}
+#text{margin:0 22px}
+.scroll{padding:16px 0 24px}
+.tok.odd{background:color-mix(in srgb,var(--ink) 7%,transparent)}.tok.even{background:color-mix(in srgb,var(--ink) 3%,transparent)}
+.tok{border-radius:4px}
+.tok.cur{background:var(--wash);outline:1.5px solid var(--accent)}
+.tok.div{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+/* the actions sit in a soft raised box, like a message composer */
+.actions{margin:4px 18px 18px;border:1px solid var(--line);border-top:1px solid var(--line);border-radius:18px;background:var(--card);padding:12px 14px;box-shadow:0 4px 18px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04)}
+.reader.edited .actions{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+.reader.edited .prompt textarea,.reader.edited #editText{border-color:var(--accent)}
+#editText{border-radius:12px;background:var(--card);border:1px solid var(--line);padding:10px 12px}
+#status{font-size:13px}
+pre.log{border-radius:8px}
+#cardTip{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.12)}
+#cardTip pre{background:var(--soft);border-radius:8px}
+dialog{background:var(--bg);border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.2)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px}
+.card input,.card select,.card textarea{border-radius:8px}
+</style>
+</head>
+<body>
+<header class="bar">
+  <span class="brand">Steiner</span>
+  <span style="flex:1"></span>
+  <button class="btn" id="openProviders">Providers</button>
+  <button class="btn icon" id="theme" aria-label="Theme" title="Theme"></button>
+</header>
+<div class="main">
+  <section class="lines" id="lines">
+    <h2>Worldlines</h2>
+    <div id="tree"></div>
+    <p class="empty" id="empty" hidden></p>
+    <div class="zoom">
+      <button class="btn" id="zOut" aria-label="Zoom out">−</button><button class="btn" id="zIn" aria-label="Zoom in">+</button><button class="btn" id="zFit">Fit</button>
+      <label class="opt" title="How many candidates hang open on the tree when you click a card or a token">Candidates <input type="number" id="ncand" min="1" max="20" value="5"></label>
+    </div>
+  </section>
+  <div class="split" id="split" role="separator" aria-orientation="vertical" aria-label="Resize the panels" tabindex="0" title="Drag to resize · double-click to reset"></div>
+  <section class="reader">
+    <div class="rhead"><h2 id="readerTitle">Text</h2><button class="btn small" id="edit">Edit text</button></div>
+    <div class="prompt" id="promptBox">
+      <label for="prompt">Prompt</label>
+      <textarea id="prompt" spellcheck="false" rows="3"></textarea>
+    </div>
+    <div class="scroll" id="scroll">
+      <div id="text"></div>
+      <textarea id="editText" spellcheck="false" aria-label="The text, to edit" hidden></textarea>
+    </div>
+    <footer class="actions">
+      <div class="row">
+        <div class="picker" id="picker">
+          <button type="button" class="btn picker-btn" id="modelBtn" aria-haspopup="listbox" aria-expanded="false"><span class="pm" id="modelName">Model</span><span class="pp" id="modelProv"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button>
+          <div class="picker-menu" id="modelMenu" role="listbox" hidden></div>
+          <select id="model" aria-label="Model" hidden></select>
+        </div>
+        <label class="opt"><input type="number" id="steps" min="1" max="10000" value="30" aria-label="Tokens to grow"> tokens</label>
+        <label class="opt" title="Fast: one request writes many tokens, each with its candidates (instead of one request per token). The text is the same, but the server reports probabilities differently while generating: they are approximate, off by up to ~10 points on the real model, and the order of candidates can differ. Leave it off when the probabilities matter."><input type="checkbox" id="fast"> Fast <span class="dim">(approximate probabilities)</span></label>
+      </div>
+      <div class="row">
+        <button class="btn primary" id="grow">Grow</button>
+        <button class="btn" id="next" title="Only the next tokens (one request)">Next</button>
+        <button class="btn" id="stop" disabled>Stop</button>
+        <span id="status"></span>
+      </div>
+      <p class="note" id="editNote"></p>
+      <pre class="log" id="log" hidden></pre>
+    </footer>
+  </section>
+</div>
+<div id="cardTip" hidden></div>
+<dialog id="providers" aria-labelledby="provTitle">
+  <div class="dlg">
+    <div class="dlg-top">
+      <h2 id="provTitle">Providers</h2>
+      <p class="note">OpenAI-compatible chat completions URLs of <b>vLLM</b>-backed servers. Keys are kept in their own files and never shown again.</p>
+      <p class="note mono" id="provPath" style="font-size:12px"></p>
+    </div>
+    <div class="dlg-body" id="provList"></div>
+    <div class="dlg-foot">
+      <button class="btn" id="provAdd">Add provider</button>
+      <span style="flex:1"></span>
+      <span class="note" id="provMsg" role="status"></span>
+      <button class="btn" id="provClose">Close</button>
+      <button class="btn primary" id="provSave">Save</button>
+    </div>
+  </div>
+</dialog>
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; };
+const SPECIAL = /^<\|[^|]+\|>$/, SVG = 'http://www.w3.org/2000/svg';
+let note = '', cfg, nodes = [], kids = [], edits = new Map(), jobs = [], blocked = {}, requests = 0, running = false, timer = null, pending = null;
+let grownSet = new Set(), segs = [], segOf = new Map(), sel = null, cursor = null, fanAt = null;  // fanAt: where candidates hang open  // sel: the selected segment; cursor: the selected token
+
+function addNodes(list) {
+  for (const n of list) {
+    const i = nodes.length; nodes.push(n); kids.push([]);
+    if (n.p >= 0) kids[n.p].push(i); else if (n.origin >= 0) { if (!edits.has(n.origin)) edits.set(n.origin, []); edits.get(n.origin).push(i); }
+  }
+}
+const isRoot = i => nodes[i].p < 0;
+const up = i => isRoot(i) ? nodes[i].origin : nodes[i].p;
+function rootOf(i) { while (!isRoot(i)) i = nodes[i].p; return i; }
+function textOf(i) { const t = []; while (!isRoot(i)) { t.push(nodes[i].t); i = nodes[i].p; } return nodes[i].prefix + t.reverse().join(''); }
+const promptOf = i => nodes[rootOf(i)].prompt;
+const modelOf = i => JSON.stringify([nodes[rootOf(i)].provider, nodes[rootOf(i)].model]);
+const prob = i => isRoot(i) ? 1 : Math.exp(nodes[i].lp);
+const pct = p => p >= .9 ? '' : p >= .095 ? Math.round(p * 100) + '%' : p >= .001 ? (p * 100).toFixed(1) + '%' : '<.1%';
+const pctAlways = p => p >= .995 ? '>99%' : pct(p);
+function markGrown() { grownSet = new Set(); for (const j of jobs) for (let i = j.head; i >= 0; i = nodes[i]?.p ?? -1) { grownSet.add(i); if (i === j.start) break; } }
+
+// A node is part of a worldline when something was grown through it or from it; the candidates that were only listed
+// are not. A worldline ends where nothing real follows.
+const real = i => isRoot(i) || grownSet.has(i) || kids[i].length > 0 || blocked[i] != null;
+const realKids = i => [...kids[i].filter(real), ...(edits.get(i) || [])];
+
+// The compressed tree: a segment is a run of tokens up to the next place where the text goes more than one way (or
+// ends). Its children are the runs that start there, most probable first.
+function buildSegments() {
+  segs = []; segOf = new Map();
+  const n = Math.max(1, Math.min(20, Number($('ncand').value) || 5));
+  function build(start, parent, ghost) {
+    const s = {nodes: [], parent, kids: [], start, ghost}; segs.push(s);
+    if (ghost) { s.nodes.push(start); s.end = start; return s; }  // a candidate nothing was written after
+    for (let i = start; ;) {
+      s.nodes.push(i); segOf.set(i, s);
+      const rk = realKids(i);
+      if (rk.length !== 1 || isRoot(rk[0]) || i === fanAt) {
+        s.end = i;
+        const list = i === fanAt ? [...kids[i].filter((k, r) => real(k) || r < n), ...(edits.get(i) || [])] : rk;
+        for (const k of list) s.kids.push(build(k, s, !real(k)));
+        break;
+      }
+      i = rk[0];
+    }
+    return s;
+  }
+  for (let r = 0; r < nodes.length; r++) if (isRoot(r) && nodes[r].origin < 0) build(r, null);
+}
+const segText = s => s.nodes.map(i => isRoot(i) ? nodes[i].prefix : SPECIAL.test(nodes[i].t) ? '⏎' : nodes[i].t).join('');
+
+// Left to right, one column per fork; a segment sits in the middle of its children.
+const W = 196, H = 66, GH = 28, COL = W + 34, VGAP = 12;
+function drawTree() {
+  const box = $('tree'); box.replaceChildren(); box.style.setProperty('--w', W + 'px');
+  const svg = document.createElementNS(SVG, 'svg'); box.append(svg);
+  const onPath = new Set(); for (let s = sel; s; s = s.parent) onPath.add(s);
+  const pos = new Map(); let next = 0, maxX = 0;
+  const hOf = s => s.ghost ? GH : H;
+  function place(s, depth) {
+    s.kids.forEach(k => place(k, depth + 1));
+    let mid;
+    if (s.kids.length) { const a = pos.get(s.kids[0]), b = pos.get(s.kids.at(-1)); mid = (a.y + a.h / 2 + b.y + b.h / 2) / 2; }
+    else { mid = next + hOf(s) / 2; next += hOf(s) + (s.ghost ? 6 : VGAP); }
+    pos.set(s, {x: depth * COL, y: mid - hOf(s) / 2, h: hOf(s)}); maxX = Math.max(maxX, depth * COL + W);
+  }
+  for (const s of segs) if (!s.parent) { place(s, 0); next += H; }
+  for (const s of segs) {
+    const p = pos.get(s), b = document.createElement('button');
+    b.style.left = p.x + 'px'; b.style.top = p.y + 'px'; b.segRef = s;
+    if (s.ghost) {  // a candidate: its token and probability; clicking it grows from there
+      const c = s.start, pr = prob(c);
+      b.className = 'seg ghost' + (c === cursor ? ' cur' : '');
+      b.append(Object.assign(document.createElement('div'), {className: 'x', textContent: isRoot(c) ? nodes[c].model : JSON.stringify(nodes[c].t).slice(1, -1) || '∅'}),
+               Object.assign(document.createElement('div'), {className: 'm', innerHTML: `<span class="${pr < .5 ? 'low' : ''}">${pctAlways(pr)} · #${nodes[c].r}</span>`}));
+      b.onmouseenter = e => showTip(s, e); b.onmousemove = e => moveTip(e); b.onmouseleave = hideTip;
+      b.onclick = () => growFrom(c);
+      box.append(b); link(s, p); continue;
+    }
+    b.className = 'seg' + (s === sel ? ' sel' : onPath.has(s) ? ' on' : '');
+    const text = segText(s), x = document.createElement('div'); x.className = 'x';
+    // newlines shown as a quiet ↵, runs of spaces kept short
+    for (const [k, line] of text.split('\n').entries()) { if (k) x.append(Object.assign(document.createElement('i'), {textContent: ' ↵ '})); x.append(line.replace(/ {2,}/g, ' ')); }
+    if (!text) x.append(Object.assign(document.createElement('i'), {textContent: '(empty)'}));
+    const m = document.createElement('div'); m.className = 'm';
+    const add = (t, c) => m.append(Object.assign(document.createElement('span'), {textContent: t, className: c || ''}));
+    if (isRoot(s.start)) add(nodes[s.start].model + (nodes[s.start].origin >= 0 ? ' · diverged' : ''));
+    else { const pr = prob(s.start); add(`${pctAlways(pr)} · #${nodes[s.start].r}`, pr < .5 ? 'low' : ''); }
+    add(`${s.nodes.length - (isRoot(s.start) ? 1 : 0)} tokens`);
+    const last = nodes[s.end];
+    if (!s.kids.length) add(!isRoot(s.end) && SPECIAL.test(last.t) ? 'ended' : 'open ⋯', !isRoot(s.end) && SPECIAL.test(last.t) ? 'endm' : '');
+    else add(`${s.kids.length} ways →`);
+    b.append(x, m);
+    b.onmouseenter = e => showTip(s, e); b.onmousemove = e => moveTip(e); b.onmouseleave = hideTip;
+    b.onclick = () => { const t = s.end; fanAt = kids[t].length ? t : null; buildSegments(); select(segOf.get(t)); const g = segs.find(x => x.ghost && x.parent?.end === t); if (g) { if (tz < .9) { const pane = $('lines'); zoomAt(1 / tz, pane.clientWidth / 2, pane.clientHeight / 2); } centerOn(g); } };
+    box.append(b); link(s, p);
+  }
+  function link(s, p) {  // from the end of the parent to this segment
+    if (!s.parent) return;
+    const q = pos.get(s.parent), x0 = q.x + W, y0 = q.y + q.h / 2, x1 = p.x, y1 = p.y + p.h / 2, mid = (x0 + x1) / 2;
+    const path = document.createElementNS(SVG, 'path');
+    path.setAttribute('d', `M ${x0} ${y0} C ${mid} ${y0}, ${mid} ${y1}, ${x1} ${y1}`);
+    path.setAttribute('class', (onPath.has(s) ? 'on' : '') + (isRoot(s.start) ? ' div' : '') + (s.ghost ? ' ghost' : ''));
+    svg.append(path);
+  }
+  box.style.width = maxX + 'px'; box.style.height = next + 'px';
+  $('empty').hidden = segs.length > 0;
+  $('empty').textContent = !cfg?.models.length ? 'No models yet. Add a vLLM-backed provider under Providers.' : 'No worldlines yet. Write a prompt on the right, then Grow.';
+  svg.setAttribute('width', maxX); svg.setAttribute('height', next);
+  view();
+}
+// Pan and zoom: drag the background (or a card, if you move), scroll to zoom around the pointer.
+let tx = 16, ty = 44, tz = 1, drag = null, dragged = false;
+const view = () => { $('tree').style.transform = `translate(${tx}px, ${ty}px) scale(${tz})`; };
+function zoomAt(f, cx, cy) { const z = Math.max(.2, Math.min(2.5, tz * f)); tx = cx - (cx - tx) * z / tz; ty = cy - (cy - ty) * z / tz; tz = z; view(); }
+function fitTree() {
+  const pane = $('lines'), t = $('tree'), w = t.offsetWidth || 1, h = t.offsetHeight || 1;
+  tz = Math.max(.2, Math.min(1.2, (pane.clientWidth - 40) / w, (pane.clientHeight - 90) / h)); tx = 20; ty = 44; view();
+}
+function centerOn(s) {
+  const card = [...$('tree').children].find(c => c.segRef === s); if (!card) return;
+  const pane = $('lines');
+  tx = pane.clientWidth * .45 - (card.offsetLeft + card.offsetWidth / 2) * tz; ty = pane.clientHeight / 2 - (card.offsetTop + card.offsetHeight / 2) * tz; view();
+}
+function reveal(s) {  // keep the selected card in sight
+  const card = [...$('tree').children].find(c => c.segRef === s); if (!card) return;
+  const pane = $('lines'), x = card.offsetLeft * tz + tx, y = card.offsetTop * tz + ty, w = card.offsetWidth * tz, h = card.offsetHeight * tz;
+  if (x < 10 || x + w > pane.clientWidth - 10) tx += pane.clientWidth / 2 - (x + w / 2);
+  if (y < 40 || y + h > pane.clientHeight - 50) ty += pane.clientHeight / 2 - (y + h / 2);
+  view();
+}
+const lines = $('lines');
+lines.addEventListener('pointerdown', e => { if (e.target.closest('.zoom')) return; drag = {x: e.clientX, y: e.clientY, tx, ty}; dragged = false; });
+addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!dragged && Math.abs(dx) + Math.abs(dy) > 4) { dragged = true; lines.classList.add('dragging'); }
+  if (dragged) { tx = drag.tx + dx; ty = drag.ty + dy; view(); }
+});
+addEventListener('pointerup', () => { drag = null; lines.classList.remove('dragging'); setTimeout(() => dragged = false); });
+lines.addEventListener('click', e => { if (dragged) { e.stopPropagation(); e.preventDefault(); } }, true);
+lines.addEventListener('wheel', e => { e.preventDefault(); const r = lines.getBoundingClientRect(); zoomAt(Math.exp(-e.deltaY * .0015), e.clientX - r.left, e.clientY - r.top); }, {passive: false});
+$('zIn').onclick = () => zoomAt(1.25, lines.clientWidth / 2, lines.clientHeight / 2);
+$('zOut').onclick = () => zoomAt(.8, lines.clientWidth / 2, lines.clientHeight / 2);
+$('zFit').onclick = fitTree;
+
+function showTip(s, e) {
+  const tip = $('cardTip'), rows = [];
+  if (s.ghost) {
+    const c = s.start;
+    const ord = ['', 'top', '2nd', '3rd'][nodes[c].r] || `${nodes[c].r}th`, p = prob(c) * 100;
+    tip.replaceChildren(Object.assign(document.createElement('div'), {textContent: `${JSON.stringify(nodes[c].t)}: the model's ${ord} choice here, ${p >= 10 ? p.toFixed(0) : p >= .1 ? p.toFixed(1) : p.toPrecision(2)}%. Never written on yet.`}), Object.assign(document.createElement('div'), {className: 'hint', textContent: `Click to grow ${$('steps').value} tokens from here`}));
+  } else {
+    const first = s.start, root = isRoot(first), lines = [];
+    const pc = i => { const p = prob(i) * 100; return p >= 99.95 ? '>99.9%' : p >= 10 ? p.toFixed(0) + '%' : p >= .1 ? p.toFixed(1) + '%' : p.toPrecision(2) + '%'; };
+    const ord = r => ['', 'top', '2nd', '3rd'][r] || `${r}th`;
+    const tok = i => JSON.stringify(nodes[i].t);
+    if (root) lines.push(nodes[first].origin >= 0 ? `A new worldline from edited text, written by ${nodes[first].model}.` : `The start, written by ${nodes[first].model}.`);
+    else if (nodes[first].r === 1) lines.push(`Goes on with ${tok(first)}, the model's top choice here (${pc(first)}).`);
+    else lines.push(`Branches off with ${tok(first)}, the model's ${ord(nodes[first].r)} choice here (${pc(first)}).`);
+    const toks = s.nodes.filter(i => !isRoot(i)), unsure = toks.filter(i => i !== first && prob(i) < .5);
+    if (toks.length > 1) {
+      if (!unsure.length) lines.push(`${toks.length} tokens; the model was sure of all the others.`);
+      else { const i = unsure.reduce((a, b) => prob(a) < prob(b) ? a : b); lines.push(`${toks.length} tokens; it hesitated at ${unsure.length === 1 ? '' : unsure.length + ' places, most at '}${tok(i)} (${pc(i)}).`); }
+    }
+    const end = s.end, ended = !isRoot(end) && SPECIAL.test(nodes[end].t);
+    lines.push(ended ? 'The model ended its answer here.'
+      : s.kids.length ? `Splits into ${s.kids.length} worldlines after this.`
+      : kids[end].length ? `Nothing grown after this; click the card to see what could come next.`
+      : `Nothing after this yet: click ⋯ in the text, or Grow, to go on.`);
+    tip.replaceChildren(Object.assign(document.createElement('pre'), {textContent: segText(s) || '(empty)'}),
+      ...lines.map(t => Object.assign(document.createElement('div'), {textContent: t})));
+  }
+  tip.hidden = false; moveTip(e);
+}
+function dl(rows) { const d = document.createElement('dl'); for (const [k, v] of rows) d.append(Object.assign(document.createElement('dt'), {textContent: k}), Object.assign(document.createElement('dd'), {textContent: v})); return d; }
+function moveTip(e) { const t = $('cardTip'); t.style.left = Math.min(e.clientX + 14, innerWidth - t.offsetWidth - 8) + 'px'; t.style.top = Math.min(e.clientY + 16, innerHeight - t.offsetHeight - 8) + 'px'; }
+function hideTip() { $('cardTip').hidden = true; }
+addEventListener('pointerdown', hideTip);
+
+function select(s) { sel = s; cursor = s.end; drawTree(); drawText(); fillBoxes(); }
+let firstDraw = true;
+
+// The reader: the selected worldline from its start to its end, line breaks and all.
+function drawText() {
+  const box = $('text'); box.replaceChildren();
+  if (!sel) { $('readerTitle').textContent = 'Text'; return; }
+  const path = []; for (let i = sel.end; i != null && i >= 0; i = up(i)) path.unshift(i);
+  $('readerTitle').textContent = `Text · ${nodes[rootOf(sel.end)].model}`;
+  let odd = false;
+  for (const i of path) {
+    if (isRoot(i)) { if (nodes[i].prefix) box.append(Object.assign(document.createElement('span'), {className: 'pre', textContent: nodes[i].prefix})); continue; }
+    const t = SPECIAL.test(nodes[i].t) ? '⏎ end' : nodes[i].t || '∅', pr = prob(i);
+    const others = kids[nodes[i].p].filter(k => k !== i && real(k)).length + (edits.get(nodes[i].p)?.length || 0);
+    const cls = ['tok', (odd = !odd) ? 'odd' : 'even'];
+    if (pr < .5) cls.push('low');
+    if (i === sel.start) cls.push('div'); else if (others) cls.push('fork');
+    if (i === cursor && fanAt != null && fanAt !== sel?.end) cls.push('cur');
+    if (SPECIAL.test(nodes[i].t)) cls.push('end');
+    // newlines go between ruby pieces, so the text really breaks
+    const parts = t.split('\n');
+    parts.forEach((part, k) => {
+      if (k) box.append('\n');
+      if (!part && parts.length > 1) return;
+      const r = document.createElement('ruby'); r.className = cls.join(' '); r.dataset.i = i;
+      r.append(part); if (k === 0 || !parts[0]) { const rt = document.createElement('rt'); rt.textContent = pct(pr); r.append(rt); }
+      box.append(r);
+    });
+    if (t.startsWith('\n') && !parts[0]) {}  // a token that only breaks the line has no visible piece; its fork shows on the next
+  }
+  const last = sel.end;
+  if (!sel.kids.length && !isRoot(last) && !SPECIAL.test(nodes[last].t) && !blocked[last]) {
+    const m = Object.assign(document.createElement('span'), {className: 'more', textContent: ' ⋯', title: `Grow ${$('steps').value} more tokens`});
+    m.onclick = () => { cursor = last; grow(Math.max(1, Number($('steps').value) || 1)); }; box.append(m);
+  }
+  box.querySelectorAll('ruby').forEach(r => r.onclick = () => openAt(Number(r.dataset.i)));
+}
+function openAt(i) {  // the clicked token: its candidates hang open on the tree, where it was written
+  cursor = i; fanAt = isRoot(i) ? null : nodes[i].p;
+  const end = sel?.end; buildSegments(); sel = segOf.get(end) ?? sel;
+  drawTree(); drawText(); fillBoxes();
+  const g = segs.find(s => s.ghost && s.parent?.end === fanAt) ?? segOf.get(i);
+  if (g) { if (tz < .9) { const pane = $('lines'); zoomAt(1 / tz, pane.clientWidth / 2, pane.clientHeight / 2); } centerOn(g); }
+}
+function growFrom(c) { cursor = c; fanAt = null; fillBoxes(); grow(Math.max(1, Number($('steps').value) || 1)); }
+
+const editable = i => { let t = textOf(i); if (!isRoot(i) && SPECIAL.test(nodes[i].t)) t = t.slice(0, -nodes[i].t.length); return t; };
+function fillBoxes() { const i = cursor ?? sel?.end; if (i == null) return; $('prompt').value = promptOf(i); promptLine(); $('editText').value = editable(i); setModel(modelOf(i)); edited(); }
+function isChanged() { const i = cursor; return i == null || $('model').value !== modelOf(i) || $('prompt').value !== promptOf(i) || $('editText').value !== editable(i); }
+function edited() {
+  const i = cursor, changed = isChanged();
+  $('grow').textContent = i != null && changed ? 'Grow new worldline' : 'Grow';
+  const done = i != null && !changed && !isRoot(i) && SPECIAL.test(nodes[i].t);  // nothing comes after the end of an answer
+  $('grow').disabled = $('next').disabled = done;
+  document.querySelector('.reader').classList.toggle('edited', i != null && changed);
+  $('editNote').textContent = done ? 'The model ended its answer here. Edit the text, or open a card\'s candidates on the tree, to grow another worldline.' : i == null ? 'Write a prompt, then Grow.' : changed ? 'Changed: Grow starts a new worldline from this text.' : 'Grow continues from the selected token. Edit the text or prompt to start a new worldline here.';
+}
+function setModel(v) { const sel = $('model'); if ([...sel.options].some(o => o.value === v)) sel.value = v; syncModel(); }
+// The model picker: a button that shows the model, and a menu of all of them, grouped by provider.
+function syncModel() {
+  const v = $('model').value; let p = '', m = 'No model';
+  try { [p, m] = JSON.parse(v); } catch {}
+  $('modelName').textContent = m; $('modelProv').textContent = p;
+}
+function openPicker() {
+  const menu = $('modelMenu'), cur = $('model').value;
+  menu.replaceChildren(...(cfg.models.length ? [] : [el('div', 'No models yet: add one under Providers.', 'h')]),
+    ...cfg.models.map(m => {
+      const v = JSON.stringify([m.provider, m.model]), b = document.createElement('button');
+      b.type = 'button'; b.setAttribute('role', 'option'); b.setAttribute('aria-selected', String(v === cur));
+      const n = el('span', m.model, 'n'); n.append(el('span', m.provider + (m.key ? '' : ' · no key'), 'd'));
+      b.append(n, el('span', '✓', 'ck'));
+      b.onclick = () => { $('model').value = v; syncModel(); closePicker(); edited(); };
+      return b;
+    }));
+  menu.hidden = false; $('modelBtn').setAttribute('aria-expanded', 'true');
+  (menu.querySelector('[aria-selected=true]') || menu.querySelector('button'))?.focus();
+}
+function closePicker() { $('modelMenu').hidden = true; $('modelBtn').setAttribute('aria-expanded', 'false'); }
+$('modelBtn').onclick = e => { e.stopPropagation(); $('modelMenu').hidden ? openPicker() : closePicker(); };
+document.addEventListener('pointerdown', e => { if (!e.target.closest('#picker')) closePicker(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePicker(); });
+
+async function getJSON(url, data, method = 'POST') {
+  const r = await fetch(url, data ? {method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)} : {});
+  const v = await r.json(); if (!r.ok) throw new Error(v.error || r.statusText); return v;
+}
+async function poll() {
+  clearTimeout(timer);
+  let s; try { s = await getJSON('/api/state?from=' + nodes.length); } catch { $('status').textContent = 'server not responding'; timer = setTimeout(poll, 4000); return; }
+  const fresh = s.nodes.length; addNodes(s.nodes); jobs = s.jobs; blocked = s.blocked; requests = s.requests; running = s.running; note = s.note; markGrown();
+  if (fresh || running || !segs.length) {
+    const was = sel && [sel.end, sel.start];
+    buildSegments();
+    const job = jobs.at(-1);
+    if (pending != null && pending < nodes.length && segOf.has(pending)) { sel = segOf.get(pending); pending = null; }
+    else if (was) sel = segOf.get(was[0]) ?? segOf.get(was[1]) ?? segs[0];
+    if (running && job && segOf.has(job.head)) sel = segOf.get(job.head);
+    if (!sel && segs.length) { sel = segs[0]; while (sel.kids.length) sel = sel.kids[0]; }
+    if (sel) cursor = sel.nodes.includes(cursor) ? cursor : sel.end;
+    drawTree(); drawText(); fillBoxes();
+    if (firstDraw) { firstDraw = false; fitTree(); } else if (running) reveal(sel);
+  }
+  const job = jobs.at(-1);
+  $('stop').disabled = !running;
+  $('status').textContent = job ? `${running ? 'Growing' : {done: 'Done', ended: 'Ended', stopped: 'Stopped', failed: 'Failed'}[job.status] || job.status} · ${job.added} of ${job.steps} tokens · ${requests} requests` : '';
+  const msg = job?.error || (running && note) || ''; $('log').hidden = !msg; $('log').textContent = msg;
+  timer = setTimeout(poll, running ? 800 : 4000);
+}
+async function grow(steps) {
+  try {
+    const [provider, model] = JSON.parse($('model').value);
+    const r = await getJSON('/api/grow', {node: cursor, prompt: $('prompt').value, text: isChanged() ? $('editText').value : textOf(cursor), steps, provider, model, fast: $('fast').checked});
+    pending = r.start; setTimeout(poll, 500);
+  } catch (e) { $('status').textContent = e.message; }
+}
+$('grow').onclick = () => grow(Math.max(1, Number($('steps').value) || 1));
+$('next').onclick = () => grow(0);
+$('stop').onclick = async () => { await getJSON('/api/stop', {}); poll(); };
+// Editing the text in place: the reading view becomes a text box; Grow then starts a new worldline from it.
+$('edit').onclick = () => {
+  const editing = $('editText').hidden;
+  $('editText').hidden = !editing; $('text').hidden = editing; $('edit').textContent = editing ? 'Done' : 'Edit text';
+  if (editing) { $('editText').focus(); } else if ($('editText').value === editable(cursor ?? sel.end)) drawText();
+  edited();
+};
+// the prompt box grows with its text, up to a few lines
+const promptLine = () => { const t = $('prompt'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 180) + 'px'; };
+$('prompt').oninput = () => { promptLine(); edited(); };
+$('editText').oninput = $('model').onchange = edited;
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && fanAt != null) { fanAt = null; const end = sel?.end; buildSegments(); sel = segOf.get(end) ?? sel; drawTree(); } });
+try { $('ncand').value = localStorage.getItem('steiner-candidates') || 5; $('fast').checked = localStorage.getItem('steiner-fast') === 'on'; } catch {}
+$('fast').onchange = () => { try { localStorage.setItem('steiner-fast', $('fast').checked ? 'on' : 'off'); } catch {} };
+$('ncand').onchange = () => { try { localStorage.setItem('steiner-candidates', $('ncand').value); } catch {} if (fanAt != null) { const end = sel?.end; buildSegments(); sel = segOf.get(end) ?? sel; drawTree(); } };
+
+// The line between the panels: drag to resize (remembered in this browser), double-click to reset, arrows to nudge.
+(() => {
+  const main = document.querySelector('.main'), split = $('split');
+  const setLeft = px => {
+    if (px == null) { main.style.removeProperty('--left'); try { localStorage.removeItem('steiner-left'); } catch {} return; }
+    const w = Math.round(Math.max(240, Math.min(main.clientWidth - 320, px)));
+    main.style.setProperty('--left', w + 'px'); try { localStorage.setItem('steiner-left', w); } catch {}
+  };
+  try { const v = Number(localStorage.getItem('steiner-left')); if (v) setLeft(v); } catch {}
+  let start = null;
+  split.addEventListener('pointerdown', e => { start = {x: e.clientX, w: $('lines').offsetWidth}; split.setPointerCapture(e.pointerId); split.classList.add('active'); document.body.classList.add('resizing'); e.stopPropagation(); });
+  split.addEventListener('pointermove', e => { if (start) setLeft(start.w + e.clientX - start.x); });
+  split.addEventListener('pointerup', () => { start = null; split.classList.remove('active'); document.body.classList.remove('resizing'); });
+  split.addEventListener('dblclick', () => setLeft(null));
+  split.addEventListener('keydown', e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); setLeft($('lines').offsetWidth + (e.key === 'ArrowLeft' ? -40 : 40)); } });
+})();
+
+// Theme: the system's, light or dark (remembered in this browser)
+const THEMES = {system: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6.25"/><path d="M8 1.75v12.5A6.25 6.25 0 0 0 8 1.75z" fill="currentColor"/></svg>',
+  light: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg>',
+  dark: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M13.5 9.6A5.75 5.75 0 0 1 6.4 2.5a5.75 5.75 0 1 0 7.1 7.1z"/></svg>'};
+let theme = 'system'; try { theme = localStorage.getItem('steiner-theme') || 'system'; } catch {}
+function applyTheme() { if (theme === 'system') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = theme; $('theme').innerHTML = THEMES[theme]; $('theme').title = `Theme: ${theme}`; }
+$('theme').onclick = () => { theme = {system: 'light', light: 'dark', dark: 'system'}[theme]; try { localStorage.setItem('steiner-theme', theme); } catch {} applyTheme(); };
+applyTheme();
+
+// The models to grow with
+function fillModels() {
+  const sel = $('model'), cur = sel.value;
+  sel.replaceChildren(...cfg.models.map(m => { const o = document.createElement('option'); o.textContent = `${m.provider} / ${m.model}` + (m.key ? '' : ' (no key)'); o.value = JSON.stringify([m.provider, m.model]); return o; }));
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+  syncModel();
+}
+async function refreshConfig() { cfg = await getJSON('/api/config'); fillModels(); }
+// Providers: edited in a draft, saved all at once. Keys are written one at a time, and only for a saved provider.
+let draft = [], provView = null, dirty = false;
+const dlg = $('providers');
+function field(label, value, set, attrs = {}) {
+  const l = el('label', label), i = el('input');
+  Object.assign(i, attrs); i.value = value ?? ''; i.oninput = () => { set(i.value); dirty = true; };
+  l.append(i); return l;
+}
+function renderProviders() {
+  $('provPath').textContent = provView ? provView.path : '';
+  const list = $('provList');
+  if (!draft.length) { list.replaceChildren(el('p', 'No providers yet. Add one, give it a model, Save, then set its key.', 'note')); return; }
+  list.replaceChildren(...draft.map((p, pi) => {
+    const card = el('section', null, 'card');
+    const head = el('div', null, 'card-head'), title = el('h3', p.name || 'New provider'), del = el('button', 'Remove', 'btn ghost danger');
+    del.onclick = () => { if (confirm(`Remove ${p.name || 'this provider'}? Its worldlines stay, but cannot grow.`)) { draft.splice(pi, 1); dirty = true; renderProviders(); } };
+    head.append(title, del);
+    const grid = el('div', null, 'grid');
+    const url = field('Chat completions URL', p.url, v => p.url = v.trim(), {placeholder: 'https://…/v1/chat/completions', spellcheck: false}); url.classList.add('wide');
+    grid.append(
+      field('Name', p.name, v => { p.name = v.trim(); title.textContent = p.name || 'New provider'; }, {placeholder: 'genai', spellcheck: false}),
+      field('Key from environment variable', p.key_env, v => p.key_env = v.trim() || null, {placeholder: 'optional, e.g. GENAI_KEY', spellcheck: false}),
+      url,
+      field('Seconds between requests', p.min_interval, v => p.min_interval = Number(v), {type: 'number', min: 0, step: 0.5}),
+      field('Candidates per node', p.width, v => p.width = Math.round(Number(v)), {type: 'number', min: 1, max: 1000}));
+    // the key
+    const saved = provView?.providers.find(q => q.name === p.was), live = saved && p.was === p.name;
+    const keySec = el('div', null, 'sub'), keyrow = el('div', null, 'keyrow'), kin = el('input'), kset = el('button', 'Set key', 'btn'), kdel = el('button', 'Remove key', 'btn ghost');
+    kin.type = 'password'; kin.autocomplete = 'off'; kin.placeholder = live ? 'paste a new key' : 'save the provider first';
+    kin.setAttribute('aria-label', 'API key');
+    kin.disabled = kset.disabled = !live; kdel.disabled = !live || !saved.key.set;
+    const kstat = el('div', null, 'note');
+    if (saved?.key.set) {
+      const from = saved.key.source.startsWith('$') ? `environment variable ${saved.key.source.slice(1)}` : saved.key.source;
+      kstat.append(el('p', `✓ Key saved, ending in ${saved.key.hint.replace('…', '')}`, 'note ok'), el('p', `Read from ${from}`, 'note mono'));
+      kstat.lastChild.style.fontSize = '12px';
+    } else kstat.append(el('p', 'No key yet: paste one below and press Set key.', 'note'));
+    const putKey = async key => {
+      try { provView = await getJSON(`/api/providers/${encodeURIComponent(p.name)}/key`, {key}, 'PUT'); kin.value = ''; await refreshConfig(); renderProviders(); }
+      catch (e) { $('provMsg').textContent = e.message; $('provMsg').className = 'note bad'; }
+    };
+    kset.onclick = () => kin.value.trim() && putKey(kin.value);
+    kin.onkeydown = e => { if (e.key === 'Enter') kset.click(); };
+    kdel.onclick = () => confirm(`Remove the key of ${p.name}?`) && putKey('');
+    keyrow.append(kin, kset, kdel);
+    keySec.append(el('h4', 'API key'), kstat, keyrow);
+    // the models
+    const models = el('div', null, 'sub');
+    models.append(el('h4', 'Models'));
+    p.models.forEach((m, mi) => {
+      const row = el('div', null, 'mrow');
+      const back = el('label', 'Backend'), bs = el('select');
+      bs.append(...(provView?.backends || ['qwen', 'gpt-oss']).map(b => { const o = el('option', b); o.value = b; return o; }));
+      bs.value = m.backend; bs.onchange = () => { m.backend = bs.value; m.backendSet = true; dirty = true; };
+      back.append(bs);
+      const test = el('button', 'Test', 'btn'), rm = el('button', null, 'btn icon ghost'), out = el('p', '', 'note out');
+      rm.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+      rm.setAttribute('aria-label', 'Remove this model'); rm.title = 'Remove this model';
+      rm.onclick = () => { p.models.splice(mi, 1); dirty = true; renderProviders(); };
+      test.disabled = !live || !saved.models.some(x => x.name === m.name);
+      test.title = test.disabled ? 'Save first' : 'Score an empty answer once';
+      test.onclick = async () => {
+        out.textContent = 'Testing…'; out.className = 'note out';
+        try {
+          const r = await getJSON(`/api/providers/${encodeURIComponent(p.name)}/test`, {model: m.name});
+          out.textContent = r.ok ? `Works · ${r.ms} ms · next: ${r.top.map(t => JSON.stringify(t.token)).join(' ')}` : r.error;
+          out.className = 'note out ' + (r.ok ? 'ok' : 'bad');
+        } catch (e) { out.textContent = e.message; out.className = 'note out bad'; }
+      };
+      const adv = el('details'); adv.append(el('summary', 'System message and vocabulary'));
+      const sys = el('label', 'System message (empty: the backend’s)'), ta = el('textarea');
+      ta.value = m.system ?? ''; ta.rows = 3; ta.oninput = () => { m.system = ta.value || null; dirty = true; }; sys.append(ta);
+      adv.append(sys, field('tiktoken vocabulary file, for byte-piece tokens', m.vocab_file, v => m.vocab_file = v.trim() || null, {placeholder: 'optional, e.g. ~/.config/steiner/o200k_base.tiktoken', spellcheck: false}));
+      row.append(field('Model name', m.name, v => { m.name = v.trim(); if (!m.backendSet) { m.backend = v.startsWith('gpt-oss') ? 'gpt-oss' : 'qwen'; bs.value = m.backend; } },
+        {placeholder: 'qwen3.8:27b', spellcheck: false}), back, test, rm, out, adv);
+      models.append(row);
+    });
+    const addM = el('button', 'Add model', 'btn ghost'); addM.style.justifySelf = 'start';
+    addM.onclick = () => { p.models.push({name: '', backend: 'qwen', system: null, vocab_file: null}); dirty = true; renderProviders(); };
+    models.append(addM);
+    card.append(head, grid, models, keySec);
+    return card;
+  }));
+}
+function loadDraft(v) {
+  provView = v;
+  draft = v.providers.map(p => ({...structuredClone(p), was: p.name, models: p.models.map(m => ({...m, backendSet: true}))}));
+  dirty = false;
+}
+async function openProviders() {
+  $('provMsg').textContent = '';
+  try { loadDraft(await getJSON('/api/providers')); } catch (e) { $('provMsg').textContent = e.message; }
+  renderProviders(); dlg.showModal();
+}
+$('openProviders').onclick = openProviders;
+$('provAdd').onclick = () => {
+  draft.push({name: '', url: '', key_env: null, key_file: null, min_interval: 0, width: 20, models: [{name: '', backend: 'qwen', system: null, vocab_file: null}]});
+  dirty = true; renderProviders(); $('provList').lastElementChild?.querySelector('input')?.focus();
+};
+$('provSave').onclick = async () => {
+  const providers = draft.map(({key, was, ...p}) => ({...p, was: was ?? null, models: p.models.map(({backendSet, ...m}) => m)}));
+  try {
+    loadDraft(await getJSON('/api/providers', {providers}, 'PUT'));
+    $('provMsg').textContent = 'Saved.'; $('provMsg').className = 'note ok';
+    await refreshConfig(); renderProviders();
+  } catch (e) { $('provMsg').textContent = e.message; $('provMsg').className = 'note bad'; }
+};
+$('provClose').onclick = () => { if (!dirty || confirm('Close without saving?')) dlg.close(); };
+dlg.addEventListener('cancel', e => { if (dirty && !confirm('Close without saving?')) e.preventDefault(); });
+dlg.addEventListener('close', () => poll());
+
+(async () => {
+  cfg = await getJSON('/api/config');
+  fillModels();
+  $('prompt').value = cfg.prompt; promptLine();
+  await poll();
+})();
+</script>
+</body>
+</html>

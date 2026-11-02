@@ -1,0 +1,14 @@
+(library
+ (name steiner)
+ (libraries eio yojson base64 unix uri http cohttp-eio))
+
+(rule
+ (target page.ml)
+ (deps ../web/page.html)
+ (action
+  (with-stdout-to
+   page.ml
+   (progn
+    (echo "let html = {steiner_page|")
+    (cat ../web/page.html)
+    (echo "|steiner_page}\n")))))

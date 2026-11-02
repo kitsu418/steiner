@@ -1,0 +1,2 @@
+Write a C function `int binary_search(const int *a, int n, int key)` that returns the index of `key` in the sorted
+array `a` of length `n`, or -1 if it is not there. Return only C code, with no Markdown fences and no explanation.

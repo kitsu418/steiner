@@ -1,0 +1,3 @@
+(executable
+ (name fake_vllm)
+ (libraries eio_main eio.unix cohttp-eio yojson unix))
