@@ -56,7 +56,7 @@ If the server runs on a remote machine, forward the port: `ssh -L 8800:127.0.0.1
   "providers": [
     {
       "name": "genai",
-      "url": "https://genai.rcac.purdue.edu/openai/chat/completions",
+      "url": "https://genai.rcac.purdue.edu/api/chat/completions",
       "key_env": null,
       "key_file": null,
       "min_interval": 3.5,
@@ -71,7 +71,9 @@ If the server runs on a remote machine, forward the port: `ssh -L 8800:127.0.0.1
 ```
 
 - `min_interval`: seconds between requests to this provider, shared by its models (GenAI Studio allows 20 a minute, so
-  3.5). Use 0 for your own server.
+  3.5). Use 0 for your own server. When a server rate-limits anyway (HTTP 429, or any reply that says "rate limit":
+  GenAI Studio answers 400), the request is retried after 30 s and the provider's requests are spaced further apart
+  (×1.5 each time, up to 10 s, until Steiner restarts).
 - `width`: candidates per node (top-k).
 - `backend`: the model's chat template, `qwen` (ChatML) or `gpt-oss` (harmony); see below.
 - `system`: a system message sent before the prompt, instead of the backend's.
@@ -95,10 +97,12 @@ with `--host 0.0.0.0` anyone who can reach the port can change the providers.
 
 ## Using the page
 
-**The tree (left).** Each card is a run of text up to the next place where it branches. The first line under the text
-gives its first token's probability and rank there (`0.2% · #2` means the worldline branched off with the model's 2nd
-choice); `open ⋯` means it can go on, `ended` that the model finished its answer, `3 ways →` that it splits in three.
-Hover a card for its full text and a plain summary. Drag to pan, scroll to zoom, **Fit** to see it all.
+**The tree (left).** Each card is a run of text up to the next place where it branches, with its own line breaks. The
+line under the text gives its first token's probability and rank there (`0.2% · #2` means the worldline branched off
+with the model's 2nd choice); `open ⋯` means it can go on, `ended` that the model finished its answer, `3 ways →` that
+it splits in three. A worldline you started yourself hangs from a dashed line and says how it began: `switched to
+<model>` (the same text, continued by another model) or `edited text` (its card shows what you changed). Hover a card
+for its full text and a plain summary. Drag to pan, scroll to zoom, **Fit** to see it all.
 
 - **Click a card** to switch to that worldline. The candidates for the token after it hang off the card as dashed
   chips (how many: **Candidates**, bottom left). Click a chip to grow a new worldline from it.
@@ -107,12 +111,17 @@ Hover a card for its full text and a plain summary. Drag to pan, scroll to zoom,
 
 **The text (right).** The prompt, always editable, then the selected worldline from its start, line breaks and all.
 Tokens are told apart by their shading; probabilities below 90% are written under them. The token where this worldline
-branched off is marked. **Edit text** turns it into a text box.
+branched off is marked. **Edit text** turns the whole worldline into a text box: change anything, and Grow starts a new
+worldline from where your change begins.
 
 **Growing (bottom right).** Pick the model, how many tokens, and **Grow** (from the selected token, or from the end of
 the worldline), **Next** (only the candidates for the next token, one request) or **Stop**. If the prompt, the text or
-the model differs from the worldline's, the button reads **Grow new worldline**. Errors and retries appear below.
-**Fast** writes many tokens per request instead of one; see below.
+the model differs from the worldline's, the button reads **Grow new worldline**. Notes (a retry, a rate limit, Fast
+falling back) appear below in grey, errors in red. **Fast** writes many tokens per request instead of one; see below.
+
+**Deleting.** **Delete** (top of the text) removes the selected card, everything grown after it, and any worldline
+started by hand from that part. A card grown from a candidate leaves the candidate in its list, so you can grow from it
+again. **Clear all** (top of the tree) removes every worldline. Both ask first, and wait until no grow is running.
 
 The line between the panels can be dragged. **Providers** and the theme are top right.
 
@@ -127,6 +136,8 @@ into a partly generated program, as `examples/insert_asserts.py` does.
 | `GET /api/state?from=n` | | nodes from index `n` on, the jobs, the request count |
 | `GET /api/node?id=i` | | that node's prompt, text, model, token, probability and children |
 | `POST /api/stop` | | the state |
+| `POST /api/delete` | `{"node": id}` | `{"removed": count, "epoch": e}` |
+| `POST /api/clear` | | `{"removed": count, "epoch": e}` |
 | `GET /api/config` | | the starting prompt and text, and the configured models |
 | `GET /api/providers` | | the providers, with each key's status (never the key) |
 | `PUT /api/providers` | `{"providers": [...]}`, each optionally with `"was": old name` | the providers |
@@ -144,6 +155,9 @@ Write requests need `Content-Type: application/json`.
 
 A job's `head` is the node it reached. Its `status` is one of `running`, `done`, `ended` (the model closed its answer),
 `stopped`, or `failed` (with `error` saying why).
+
+Deleting renumbers the nodes. The state carries an `epoch` that changes when that happens; a client reading the state
+incrementally (`from=n`) must then read it again from 0.
 
 ## How the probabilities are obtained
 
@@ -172,6 +186,10 @@ With **Fast** (`"fast": true`), one request generates many tokens greedily, each
 such request the server's tokens for the text are checked against the path, as when scoring; where they differ (Qwen's
 template trims trailing whitespace) or the server refuses the request, growing falls back to scoring token by token. A
 new worldline's first step is always scored.
+
+Some servers do not continue an answer at all: GenAI Studio, for `gpt-oss:120b`, closes it (`<|end|><|start|>assistant`)
+and starts a new one. The check catches this, and that model is then scored token by token for the rest of the run,
+without trying fast again.
 
 The text is the same either way. The probabilities are not exactly: a server reports them differently while
 generating than while scoring a prompt. On `qwen3.8:27b` at GenAI Studio, 40 tokens grown both ways gave the same
@@ -210,4 +228,4 @@ would use `<|eot_id|>`.
 | `src/providers.ml` | the providers file and the keys |
 | `src/backend.ml`, `src/vocab.ml` | chat templates; tiktoken vocabularies |
 | `web/page.html` | the page (tree, text, providers), built into the binary |
-| `test/fake_vllm.ml` | a stand-in vLLM server for testing without a model, both scoring and fast growing: `dune exec test/fake_vllm.exe -- --port 8901` |
+| `test/fake_vllm.ml` | a stand-in vLLM server for testing without a model: scoring, fast growing, and on request a server that will not continue answers (`--no-continue`) or rate-limits (`--rate-limit-every N`): `dune exec test/fake_vllm.exe -- --port 8901` |
